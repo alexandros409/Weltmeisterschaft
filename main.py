@@ -5,14 +5,13 @@ import os
 
 app = Flask(__name__)
 
-API_KEY = os.environ.get("API_FOOTBALL_KEY", "")
-API_HOST = "v3.football.api-sports.io"
+API_KEY = os.environ.get("FOOTBALL_DATA_KEY", "")
 
 @app.route('/')
 def home():
-    url = f"https://{API_HOST}/fixtures"
-    headers = {"x-apisports-key": API_KEY}
-    params = {"league": 22, "season": 2026, "next": 10}
+    url = "https://api.football-data.org/v4/competitions/2000/matches"
+    headers = {"X-Auth-Token": API_KEY}
+    params = {"status": "SCHEDULED"}
     try:
         r = requests.get(url, headers=headers, params=params, timeout=5)
         raw = r.json()

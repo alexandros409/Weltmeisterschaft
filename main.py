@@ -1,8 +1,12 @@
 from flask import Flask, render_template_string
 import requests
 import datetime
+import json
 
 app = Flask(__name__)
+
+import os
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 FIFA_RANKINGS = {
     "Argentina": 1, "France": 2, "England": 3, "Belgium": 4,
@@ -34,7 +38,7 @@ def calculate_prediction(home_name, away_name):
     home_rank = get_ranking(home_name)
     away_rank = get_ranking(away_name)
 
-    home_strength = (100 / home_rank) * 1.10
+    home_strength = (100 / home_rank)
     away_strength = (100 / away_rank)
 
     total = home_strength + away_strength
@@ -42,11 +46,25 @@ def calculate_prediction(home_name, away_name):
     away_win = round((away_strength / total) * 80, 1)
     draw = round(100 - home_win - away_win, 1)
     surprise = round(min(100.0, abs(home_rank - away_rank) / max(home_rank, away_rank) * 100), 1)
-
     home_xg = round((home_strength / total) * 3.2, 1)
     away_xg = round((away_strength / total) * 3.2, 1)
 
     return home_win, away_win, draw, surprise, home_xg, away_xg
+
+def get_gemini_narrative(home, away, home_rank, away_rank, home_prob, away_prob, surprise, home_xg, away_xg):
+    try:
+        prompt = f"""Είσαι αναλυτής Μουντιάλ 2026. Γράψε 2-3 προτάσεις στα Ελληνικά για τον αγώνα {home} (FIFA #{home_rank}) vs {away} (FIFA #{away_rank}).
+Δεδομένα: Πιθανότητα νίκης {home}: {home_prob}%, {away}: {away_prob}%, Προβλεπόμενο σκόρ: {home_xg}-{away_xg}, Δείκτης Έκπληξης: {surprise}%.
+Ανάλυσε τη δυναμικότητα, τη διαφορά κατάταξης και το σενάριο έκπληξης. Μην αναφέρεις έδρα. Σύντομα και ουσιαστικά."""
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        r = requests.post(url, json=payload, timeout=8)
+        data = r.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        return text.strip()
+    except:
+        return f"Διαφορά {abs(home_rank - away_rank)} θέσεων FIFA. Δείκτης Έκπληξης {surprise}%."
 
 def get_matches():
     url = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
@@ -73,6 +91,10 @@ def get_matches():
             home_name = home.get("team", {}).get("displayName", "?")
             away_name = away.get("team", {}).get("displayName", "?")
             home_prob, away_prob, draw_prob, surprise, home_xg, away_xg = calculate_prediction(home_name, away_name)
+            home_rank = get_ranking(home_name)
+            away_rank = get_ranking(away_name)
+
+            narrative = get_gemini_narrative(home_name, away_name, home_rank, away_rank, home_prob, away_prob, surprise, home_xg, away_xg)
 
             matches.append({
                 "home": home_name,
@@ -88,10 +110,11 @@ def get_matches():
                 "away_prob": away_prob,
                 "draw_prob": draw_prob,
                 "surprise": surprise,
-                "home_rank": get_ranking(home_name),
-                "away_rank": get_ranking(away_name),
+                "home_rank": home_rank,
+                "away_rank": away_rank,
                 "home_xg": home_xg,
                 "away_xg": away_xg,
+                "narrative": narrative,
             })
         return matches
     except:
@@ -122,13 +145,14 @@ HTML = """
         .team-rank { font-size: 10px; color: #ffd700; margin-top: 2px; }
         .score { font-size: 28px; font-weight: bold; color: #ffd700; padding: 0 12px; }
         .vs { font-size: 18px; color: #ffd700; font-weight: bold; padding: 0 12px; }
+        .predicted-score { background: rgba(255,215,0,0.08); border-radius: 8px; padding: 10px; text-align: center; margin-bottom: 10px; border: 1px solid rgba(255,215,0,0.2); }
+        .predicted-score .label { font-size: 10px; color: #aaa; margin-bottom: 4px; }
+        .predicted-score .value { font-size: 22px; font-weight: bold; color: #ffd700; }
         .probs { display: flex; gap: 6px; margin-bottom: 10px; }
         .prob-bar { flex: 1; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 8px 4px; text-align: center; }
         .prob-bar .label { font-size: 9px; color: #aaa; margin-bottom: 3px; }
         .prob-bar .value { font-size: 16px; font-weight: bold; color: #00f2fe; }
-        .predicted-score { background: rgba(255,215,0,0.08); border-radius: 8px; padding: 10px; text-align: center; margin-bottom: 10px; border: 1px solid rgba(255,215,0,0.2); }
-        .predicted-score .label { font-size: 10px; color: #aaa; margin-bottom: 4px; }
-        .predicted-score .value { font-size: 22px; font-weight: bold; color: #ffd700; }
+        .narrative { background: rgba(0,242,254,0.05); border-left: 3px solid #00f2fe; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; font-size: 12px; line-height: 1.6; color: #cce; }
         .surprise { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; }
         .surprise.high { background: linear-gradient(135deg, #e74c3c, #c0392b); box-shadow: 0 0 10px rgba(231,76,60,0.4); }
         .surprise.low { background: linear-gradient(135deg, #27ae60, #2ecc71); }
@@ -138,7 +162,7 @@ HTML = """
 <body>
 <header>
     <h1>⚽ Weltmeisterschaft 2026</h1>
-    <p>Live Προγνωστικά βάσει FIFA Rankings</p>
+    <p>Live Προγνωστικά • AI Ανάλυση</p>
 </header>
 <div class="grid">
 {% for m in matches %}
@@ -186,6 +210,7 @@ HTML = """
             <div class="value">{{ m.away_prob }}%</div>
         </div>
     </div>
+    <div class="narrative">🤖 {{ m.narrative }}</div>
     <div class="surprise {{ 'high' if m.surprise >= 40 else 'low' }}">
         <span>⚡ Δείκτης Έκπληξης</span>
         <span>{{ m.surprise }}%</span>
@@ -193,7 +218,7 @@ HTML = """
 </div>
 {% endfor %}
 </div>
-<footer><p>Powered by ESPN & FIFA Rankings • Weltmeisterschaft 2026</p></footer>
+<footer><p>Powered by ESPN • Gemini AI • FIFA Rankings • Weltmeisterschaft 2026</p></footer>
 </body>
 </html>
 """

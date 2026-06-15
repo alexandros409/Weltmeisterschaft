@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 API_KEY = os.environ.get("API_FOOTBALL_KEY", "")
 API_HOST = "v3.football.api-sports.io"
-WC_LEAGUE_ID = 1
+WC_LEAGUE_ID = 22
 
 def get_fixtures():
     url = f"https://{API_HOST}/fixtures"

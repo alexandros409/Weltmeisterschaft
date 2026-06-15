@@ -3,6 +3,8 @@ import json
 import os
 
 app = Flask(__name__)
+# Ορίζουμε ρητά την εφαρμογή ως 'app' στο global scope για να τη βρίσκει αμέσως η Vercel
+app = app  
 
 DATA_FILE = 'database.json'
 
@@ -128,4 +130,3 @@ def home():
 
 if __name__ == '__main__':
     app.run(debug=True)
-

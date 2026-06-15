@@ -4,7 +4,6 @@ import datetime
 
 app = Flask(__name__)
 
-# FIFA Rankings Ιούνιος 2026
 FIFA_RANKINGS = {
     "Argentina": 1, "France": 2, "England": 3, "Belgium": 4,
     "Brazil": 5, "Portugal": 6, "Netherlands": 7, "Spain": 8,
@@ -26,28 +25,28 @@ FIFA_RANKINGS = {
 }
 
 def get_ranking(team_name):
-    # Fuzzy match για διαφορετικά ονόματα
     for key, rank in FIFA_RANKINGS.items():
         if key.lower() in team_name.lower() or team_name.lower() in key.lower():
             return rank
-    return 60  # default αν δεν βρεθεί
+    return 60
 
 def calculate_prediction(home_name, away_name):
     home_rank = get_ranking(home_name)
     away_rank = get_ranking(away_name)
 
-    # Χαμηλότερο ranking = καλύτερη ομάδα
-    home_strength = (100 / home_rank) * 1.10  # home advantage
+    home_strength = (100 / home_rank) * 1.10
     away_strength = (100 / away_rank)
 
     total = home_strength + away_strength
     home_win = round((home_strength / total) * 80, 1)
     away_win = round((away_strength / total) * 80, 1)
     draw = round(100 - home_win - away_win, 1)
-
     surprise = round(min(100.0, abs(home_rank - away_rank) / max(home_rank, away_rank) * 100), 1)
 
-    return home_win, away_win, draw, surprise
+    home_xg = round((home_strength / total) * 3.2, 1)
+    away_xg = round((away_strength / total) * 3.2, 1)
+
+    return home_win, away_win, draw, surprise, home_xg, away_xg
 
 def get_matches():
     url = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
@@ -73,8 +72,7 @@ def get_matches():
 
             home_name = home.get("team", {}).get("displayName", "?")
             away_name = away.get("team", {}).get("displayName", "?")
-
-            home_prob, away_prob, draw_prob, surprise = calculate_prediction(home_name, away_name)
+            home_prob, away_prob, draw_prob, surprise, home_xg, away_xg = calculate_prediction(home_name, away_name)
 
             matches.append({
                 "home": home_name,
@@ -92,6 +90,8 @@ def get_matches():
                 "surprise": surprise,
                 "home_rank": get_ranking(home_name),
                 "away_rank": get_ranking(away_name),
+                "home_xg": home_xg,
+                "away_xg": away_xg,
             })
         return matches
     except:
@@ -126,6 +126,9 @@ HTML = """
         .prob-bar { flex: 1; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 8px 4px; text-align: center; }
         .prob-bar .label { font-size: 9px; color: #aaa; margin-bottom: 3px; }
         .prob-bar .value { font-size: 16px; font-weight: bold; color: #00f2fe; }
+        .predicted-score { background: rgba(255,215,0,0.08); border-radius: 8px; padding: 10px; text-align: center; margin-bottom: 10px; border: 1px solid rgba(255,215,0,0.2); }
+        .predicted-score .label { font-size: 10px; color: #aaa; margin-bottom: 4px; }
+        .predicted-score .value { font-size: 22px; font-weight: bold; color: #ffd700; }
         .surprise { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; }
         .surprise.high { background: linear-gradient(135deg, #e74c3c, #c0392b); box-shadow: 0 0 10px rgba(231,76,60,0.4); }
         .surprise.low { background: linear-gradient(135deg, #27ae60, #2ecc71); }
@@ -164,6 +167,10 @@ HTML = """
             <div class="team-name">{{ m.away }}</div>
             <div class="team-rank">FIFA #{{ m.away_rank }}</div>
         </div>
+    </div>
+    <div class="predicted-score">
+        <div class="label">🎯 Προβλεπόμενο Σκόρ</div>
+        <div class="value">{{ m.home_xg }} - {{ m.away_xg }}</div>
     </div>
     <div class="probs">
         <div class="prob-bar">

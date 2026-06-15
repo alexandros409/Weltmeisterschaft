@@ -1,121 +1,221 @@
-from flask import Flask, render_template_string, send_from_directory
+from flask import Flask, render_template_string
+import requests
+import os
+import datetime
 
 app = Flask(__name__)
 
-def load_data():
-    return {
-        "teams": {
-            "1": {"name": "Real Madrid", "attack": 2.8, "defense": 0.9, "fifa": 2, "form": 85},
-            "2": {"name": "Bayern Munich", "attack": 2.5, "defense": 1.1, "fifa": 6, "form": 75}
-        },
-        "matches": [
-            {"match_id": 42, "home_id": "1", "away_id": "2", "weight": 1.5}
-        ],
-        "news": [
-            {"match_id": 42, "team_id": "1", "headline": "Real Madrid captain injured!", "sentiment": -0.65, "weight": 2.3},
-            {"match_id": 42, "team_id": "1", "headline": "Thin on defense options", "sentiment": -0.20, "weight": 1.1},
-            {"match_id": 42, "team_id": "2", "headline": "Bayern morale sky high", "sentiment": 0.40, "weight": 1.3}
-        ]
-    }
+API_KEY = os.environ.get("API_FOOTBALL_KEY", "")
+API_HOST = "v3.football.api-sports.io"
+WC_LEAGUE_ID = 1
 
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('static', filename)
+def get_fixtures():
+    url = f"https://{API_HOST}/fixtures"
+    headers = {"x-apisports-key": API_KEY}
+    params = {"league": WC_LEAGUE_ID, "season": 2026, "next": 10}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=5)
+        return r.json().get("response", [])
+    except:
+        return []
 
-@app.route('/')
-def home():
-    data = load_data()
-    match = data["matches"][0]
-    home_team = data["teams"][match["home_id"]]
-    away_team = data["teams"][match["away_id"]]
+def get_team_stats(team_id):
+    url = f"https://{API_HOST}/teams/statistics"
+    headers = {"x-apisports-key": API_KEY}
+    params = {"league": WC_LEAGUE_ID, "season": 2026, "team": team_id}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=5)
+        return r.json().get("response", {})
+    except:
+        return {}
 
-    home_base = (home_team["attack"] / home_team["defense"]) + (100 / home_team["fifa"])
-    away_base = (away_team["attack"] / away_team["defense"]) + (100 / away_team["fifa"])
-    home_base *= 1.10
+def calculate_prediction(home_stats, away_stats):
+    def safe_avg(stats, direction):
+        try:
+            val = stats.get("goals", {}).get(direction, {}).get("average", {}).get("total", "0")
+            return float(val) if val else 0.0
+        except:
+            return 0.0
 
-    home_form_factor = 1.0 + ((home_team["form"] - 50) / 100)
-    away_form_factor = 1.0 + ((away_team["form"] - 50) / 100)
+    home_attack = safe_avg(home_stats, "for")
+    home_defense = safe_avg(home_stats, "against")
+    away_attack = safe_avg(away_stats, "for")
+    away_defense = safe_avg(away_stats, "against")
 
-    home_power = home_base * home_form_factor
-    away_power = away_base * away_form_factor
+    home_power = (home_attack + 1) / (home_defense + 0.5) * 1.10
+    away_power = (away_attack + 1) / (away_defense + 0.5)
 
-    home_news_impact = sum(n["sentiment"] * n["weight"] for n in data["news"] if n["match_id"] == match["match_id"] and n["team_id"] == match["home_id"])
-    away_news_impact = sum(n["sentiment"] * n["weight"] for n in data["news"] if n["match_id"] == match["match_id"] and n["team_id"] == match["away_id"])
+    total = home_power + away_power
+    home_prob = (home_power / total) * 85
+    away_prob = (away_power / total) * 85
+    draw_prob = round(100 - home_prob - away_prob, 1)
 
-    home_final = max(0.1, home_power + home_news_impact)
-    away_final = max(0.1, away_power + away_news_impact)
+    surprise = min(100.0, abs(home_prob - 50) / 50 * 100)
 
-    total_power = home_final + away_final
-    home_prob = (home_final / total_power) * 100
-    away_prob = (away_final / total_power) * 100
+    return round(home_prob, 1), round(away_prob, 1), max(0, draw_prob), round(surprise, 1)
 
-    is_home_favorite = home_base > away_base
-    surprise_index = 0.0
-
-    if is_home_favorite:
-        base_prob_home = (home_base / (home_base + away_base)) * 100
-        if home_prob < base_prob_home:
-            surprise_index = ((base_prob_home - home_prob) / base_prob_home) * 100
-    else:
-        base_prob_away = (away_base / (home_base + away_base)) * 100
-        if away_prob < base_prob_away:
-            surprise_index = ((base_prob_away - away_prob) / base_prob_away) * 100
-
-    surprise_index = min(100.0, max(0.0, surprise_index * match["weight"]))
-
-    html_template = """
+HTML = """
 <!DOCTYPE html>
-<html>
+<html lang="el">
 <head>
-    <title>Prediction & Surprise Index App</title>
     <meta charset="utf-8">
-    <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>⚽ Weltmeisterschaft 2026</title>
     <style>
-        body { font-family: Arial, sans-serif; background-color: #0A1128; text-align: center; padding: 50px; color: #ffffff; }
-        .card { background: #101F42; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: inline-block; max-width: 500px; width: 100%; border: 1px solid rgba(255,255,255,0.1); }
-        .icon-container { margin-bottom: 20px; }
-        .icon-container img { width: 80px; height: 80px; }
-        h1 { color: #00f2fe; margin-top: 0; font-size: 24px; }
-        h2 { color: #ffd700; font-size: 22px; }
-        hr { border: 0; height: 1px; background: rgba(255,255,255,0.1); margin: 20px 0; }
-        .prob { font-size: 20px; font-weight: bold; margin: 15px 0; color: #e0e6ed; }
-        .alert-box { background: linear-gradient(135deg, #e74c3c, #c0392b); color: white; padding: 15px; border-radius: 10px; margin-top: 20px; font-weight: bold; box-shadow: 0 0 15px rgba(231,76,60,0.5); }
-        .normal-box { background: linear-gradient(135deg, #2ecc71, #27ae60); color: white; padding: 15px; border-radius: 10px; margin-top: 20px; font-weight: bold; }
-        .surprise-text { color: #00f2fe; font-size: 24px; font-weight: bold; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #0A1128;
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        header {
+            text-align: center;
+            padding: 30px 0 24px;
+        }
+        header h1 { font-size: 24px; color: #00f2fe; }
+        header p { color: #aaa; font-size: 12px; margin-top: 6px; }
+        .grid {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .card {
+            background: #101F42;
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .match-date {
+            font-size: 11px;
+            color: #aaa;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .teams {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .team { text-align: center; flex: 1; }
+        .team img { width: 48px; height: 48px; object-fit: contain; }
+        .team-name { font-size: 12px; font-weight: bold; margin-top: 6px; color: #e0e6ed; }
+        .vs { font-size: 20px; color: #ffd700; font-weight: bold; padding: 0 10px; }
+        .probs { display: flex; gap: 8px; margin-bottom: 12px; }
+        .prob-bar {
+            flex: 1;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 10px 6px;
+            text-align: center;
+        }
+        .prob-bar .label { font-size: 10px; color: #aaa; margin-bottom: 4px; }
+        .prob-bar .value { font-size: 18px; font-weight: bold; color: #00f2fe; }
+        .surprise {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: bold;
+        }
+        .surprise.high {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            box-shadow: 0 0 12px rgba(231,76,60,0.4);
+        }
+        .surprise.low { background: linear-gradient(135deg, #27ae60, #2ecc71); }
+        .no-fixtures { text-align: center; padding: 60px 20px; color: #aaa; }
+        .no-fixtures h2 { color: #ffd700; margin-bottom: 10px; }
+        footer { text-align: center; margin-top: 40px; color: #444; font-size: 11px; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <div class="icon-container">
-            <img src="/static/icon.svg" alt="App Icon">
-        </div>
-        <h1>📊 Τελική Έκδοση Προγνωστικών</h1>
-        <h2>{{ home_name }} vs {{ away_name }}</h2>
-        <hr>
-        <p class="prob">🏠 Πιθανότητα {{ home_name }}: {{ "%.1f"|format(home_prob) }}%</p>
-        <p class="prob">🚀 Πιθανότητα {{ away_name }}: {{ "%.1f"|format(away_prob) }}%</p>
-        <hr>
-        <h3>⚠️ Δείκτης Έκπληξης: <span class="surprise-text">{{ "%.1f"|format(surprise_index) }}%</span></h3>
-        {% if surprise_index >= 70.0 %}
-        <div class="alert-box">
-            🚨 [PUSH NOTIFICATION TRIGGERED]<br>
-            Πιθανή Έκπληξη στο Μουντιάλ! Οι τελευταίες ειδήσεις ανατρέπουν τα δεδομένα!
-        </div>
-        {% else %}
-        <div class="normal-box">
-            ✅ Σταθερή ροή αγώνα. Δεν ανιχνεύτηκε ακραία τάση έκπληξης.
-        </div>
-        {% endif %}
+<header>
+    <h1>⚽ Weltmeisterschaft 2026</h1>
+    <p>Live Προγνωστικά • Επόμενοι Αγώνες</p>
+</header>
+<div class="grid">
+{% if fixtures %}
+  {% for f in fixtures %}
+  <div class="card">
+    <div class="match-date">{{ f.date }} • {{ f.venue }}</div>
+    <div class="teams">
+      <div class="team">
+        <img src="{{ f.home_logo }}" alt="{{ f.home }}">
+        <div class="team-name">{{ f.home }}</div>
+      </div>
+      <div class="vs">VS</div>
+      <div class="team">
+        <img src="{{ f.away_logo }}" alt="{{ f.away }}">
+        <div class="team-name">{{ f.away }}</div>
+      </div>
     </div>
+    <div class="probs">
+      <div class="prob-bar">
+        <div class="label">{{ f.home }}</div>
+        <div class="value">{{ f.home_prob }}%</div>
+      </div>
+      <div class="prob-bar">
+        <div class="label">Ισοπαλία</div>
+        <div class="value">{{ f.draw_prob }}%</div>
+      </div>
+      <div class="prob-bar">
+        <div class="label">{{ f.away }}</div>
+        <div class="value">{{ f.away_prob }}%</div>
+      </div>
+    </div>
+    <div class="surprise {{ 'high' if f.surprise >= 60 else 'low' }}">
+      <span>⚡ Δείκτης Έκπληξης</span>
+      <span>{{ f.surprise }}%</span>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="no-fixtures">
+    <h2>Δεν βρέθηκαν αγώνες</h2>
+    <p>Δοκίμασε αργότερα.</p>
+  </div>
+{% endif %}
+</div>
+<footer><p>Powered by API-Football • Weltmeisterschaft 2026</p></footer>
 </body>
 </html>
 """
 
-    return render_template_string(
-        html_template,
-        home_name=home_team["name"], away_name=away_team["name"],
-        home_prob=home_prob, away_prob=away_prob, surprise_index=surprise_index
-    )
+@app.route('/')
+def home():
+    fixtures_raw = get_fixtures()
+    fixtures = []
+    for f in fixtures_raw[:8]:
+        home_id = f["teams"]["home"]["id"]
+        away_id = f["teams"]["away"]["id"]
+        home_stats = get_team_stats(home_id)
+        away_stats = get_team_stats(away_id)
+        home_prob, away_prob, draw_prob, surprise = calculate_prediction(home_stats, away_stats)
+        try:
+            dt = datetime.datetime.fromisoformat(f["fixture"]["date"].replace("Z", "+00:00"))
+            date_str = dt.strftime("%d/%m %H:%M")
+        except:
+            date_str = "TBD"
+        fixtures.append({
+            "home": f["teams"]["home"]["name"],
+            "away": f["teams"]["away"]["name"],
+            "home_logo": f["teams"]["home"]["logo"],
+            "away_logo": f["teams"]["away"]["logo"],
+            "date": date_str,
+            "venue": f["fixture"]["venue"]["name"] or "TBD",
+            "home_prob": home_prob,
+            "away_prob": away_prob,
+            "draw_prob": draw_prob,
+            "surprise": surprise,
+        })
+    return render_template_string(HTML, fixtures=fixtures)
 
 if __name__ == '__main__':
     app.run(debug=True)

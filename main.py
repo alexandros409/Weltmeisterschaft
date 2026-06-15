@@ -1,19 +1,14 @@
 from flask import Flask
 import requests
 import json
-import os
 
 app = Flask(__name__)
 
-API_KEY = os.environ.get("FOOTBALL_DATA_KEY", "")
-
 @app.route('/')
 def home():
-    url = "https://api.football-data.org/v4/competitions/2000/matches"
-    headers = {"X-Auth-Token": API_KEY}
-    params = {"status": "SCHEDULED"}
+    url = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
     try:
-        r = requests.get(url, headers=headers, params=params, timeout=5)
+        r = requests.get(url, timeout=5)
         raw = r.json()
     except Exception as e:
         raw = {"error": str(e)}
